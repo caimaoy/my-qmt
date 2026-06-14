@@ -259,6 +259,11 @@ def get_realtime_quote(symbol: str) -> dict:
             "amount": float(fields[37]) if fields[37] else 0,
             "turnover_rate": float(fields[38]) if fields[38] else 0,
             "pe": float(fields[39]) if fields[39] else 0,
+            "pb": float(fields[46]) if len(fields) > 46 and fields[46] else 0,
+            "market_cap": float(fields[44]) if len(fields) > 44 and fields[44] else 0,  # 总市值 (亿)
+            "float_cap": float(fields[45]) if len(fields) > 45 and fields[45] else 0,  # 流通市值 (亿)
+            "real_turnover_rate": float(fields[49]) if len(fields) > 49 and fields[49] else 0,
+            "total_shares": float(fields[72]) if len(fields) > 72 and fields[72] else 0,
         }
 
     except Exception as e:
@@ -333,6 +338,88 @@ def get_history_kline_tencent(
         return pd.DataFrame()
 
 
+def get_real_turnover_rate(symbol: str) -> float:
+    """从腾讯财经获取真实换手率 (基于流通股本)
+
+    Args:
+        symbol: 股票代码
+
+    Returns:
+        真实换手率 (%)，获取失败返回 0
+    """
+    code = symbol.replace(".SS", "").replace(".SZ", "").replace(".SH", "")
+    market = "sh" if code.startswith("6") or code.startswith("9") else "sz"
+    url = f"https://qt.gtimg.cn/q={market}{code}"
+
+    try:
+        response = requests.get(url, headers=_HEADERS, timeout=10)
+        response.encoding = "gbk"
+        text = response.text
+
+        import re
+        match = re.search(r'"([^"]+)"', text)
+        if not match:
+            return 0
+
+        fields = match.group(1).split("~")
+        if len(fields) < 50:
+            return 0
+
+        # 字段 [49] 是真实换手率 (基于流通股本)
+        real_turnover = float(fields[49]) if fields[49] else 0
+        return real_turnover
+
+    except Exception:
+        return 0
+
+
+def get_stock_capital_info(symbol: str) -> dict:
+    """从腾讯财经获取股票股本和市值信息
+
+    Args:
+        symbol: 股票代码
+
+    Returns:
+        dict 包含 float_shares, total_shares, market_cap, float_cap, real_turnover_rate
+    """
+    code = symbol.replace(".SS", "").replace(".SZ", "").replace(".SH", "")
+    market = "sh" if code.startswith("6") or code.startswith("9") else "sz"
+    url = f"https://qt.gtimg.cn/q={market}{code}"
+
+    try:
+        response = requests.get(url, headers=_HEADERS, timeout=10)
+        response.encoding = "gbk"
+        text = response.text
+
+        import re
+        match = re.search(r'"([^"]+)"', text)
+        if not match:
+            return {}
+
+        fields = match.group(1).split("~")
+        if len(fields) < 50:
+            return {}
+
+        price = float(fields[3]) if fields[3] else 0
+        total_market_cap = float(fields[44]) if fields[44] else 0  # 总市值 (亿)
+        float_market_cap = float(fields[45]) if fields[45] else 0  # 流通市值 (亿)
+        total_shares = float(fields[72]) if fields[72] else 0  # 总股本
+
+        # 计算流通股本 = 流通市值 / 股价
+        float_shares = (float_market_cap * 100000000) / price if price > 0 else 0
+
+        return {
+            "float_shares": float_shares,
+            "total_shares": total_shares,
+            "market_cap": total_market_cap,
+            "float_cap": float_market_cap,
+            "real_turnover_rate": float(fields[49]) if len(fields) > 49 and fields[49] else 0,
+        }
+
+    except Exception:
+        return {}
+
+
 # ============================================================
 # 统一接口 (自动选择数据源)
 # ============================================================
@@ -362,10 +449,28 @@ def get_stock_data(
     df = get_history_kline_akshare(symbol, start_date, end_date, days, use_cache=use_cache)
 
     if not df.empty:
+        # 获取股本和市值信息
+        capital_info = get_stock_capital_info(symbol)
+        if capital_info:
+            df["Real_Turnover"] = capital_info.get("real_turnover_rate", 0)
+            df["Float_Shares"] = capital_info.get("float_shares", 0)
+            df["Total_Shares"] = capital_info.get("total_shares", 0)
+            df["Market_Cap"] = capital_info.get("market_cap", 0)
+            df["Float_Cap"] = capital_info.get("float_cap", 0)
         return df
 
     # 回退到腾讯财经
     df = get_history_kline_tencent(symbol, start_date, end_date, days)
+
+    if not df.empty:
+        # 获取股本和市值信息
+        capital_info = get_stock_capital_info(symbol)
+        if capital_info:
+            df["Real_Turnover"] = capital_info.get("real_turnover_rate", 0)
+            df["Float_Shares"] = capital_info.get("float_shares", 0)
+            df["Total_Shares"] = capital_info.get("total_shares", 0)
+            df["Market_Cap"] = capital_info.get("market_cap", 0)
+            df["Float_Cap"] = capital_info.get("float_cap", 0)
 
     return df
 

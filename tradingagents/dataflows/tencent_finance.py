@@ -100,7 +100,10 @@ def get_realtime_quote(
             "turnover_rate": float(fields[38]) if fields[38] else 0,
             "pe": float(fields[39]) if fields[39] else 0,
             "pb": float(fields[46]) if len(fields) > 46 and fields[46] else 0,
-            "market_cap": float(fields[45]) if len(fields) > 45 and fields[45] else 0,  # 亿
+            "market_cap": float(fields[44]) if len(fields) > 44 and fields[44] else 0,  # 总市值 (亿)
+            "float_cap": float(fields[45]) if len(fields) > 45 and fields[45] else 0,  # 流通市值 (亿)
+            "real_turnover_rate": float(fields[49]) if len(fields) > 49 and fields[49] else 0,
+            "total_shares": float(fields[72]) if len(fields) > 72 and fields[72] else 0,
             "timestamp": fields[30] if len(fields) > 30 else "",
         }
 
@@ -156,19 +159,35 @@ def get_history_kline(
         if "qfqday" not in kline_data:
             return f"未找到 {symbol} 的K线数据"
 
+        # 获取真实换手率
+        real_turnover = _get_real_turnover_rate(code)
+        
+        # 获取股本和市值信息
+        capital_info = _get_stock_capital_info(code)
+
         # 转换为 DataFrame
         # 格式: [日期, 开盘, 收盘, 最高, 最低, 成交量]
         rows = []
         for item in kline_data["qfqday"]:
             if len(item) >= 6:
-                rows.append({
+                row = {
                     "Date": item[0],
                     "Open": float(item[1]),
                     "Close": float(item[2]),
                     "High": float(item[3]),
                     "Low": float(item[4]),
                     "Volume": int(float(item[5])),
-                })
+                    "Real_Turnover": real_turnover,
+                }
+                # 添加股本和市值信息
+                if capital_info:
+                    row.update({
+                        "Float_Shares": capital_info.get("float_shares", 0),
+                        "Total_Shares": capital_info.get("total_shares", 0),
+                        "Market_Cap": capital_info.get("market_cap", 0),
+                        "Float_Cap": capital_info.get("float_cap", 0),
+                    })
+                rows.append(row)
 
         if not rows:
             return f"未找到 {symbol} 的K线数据"
@@ -195,6 +214,82 @@ def get_history_kline(
 
     except Exception as e:
         return f"获取腾讯财经历史数据失败: {e}"
+
+
+def _get_real_turnover_rate(code: str) -> float:
+    """获取真实换手率 (基于流通股本)
+
+    Args:
+        code: 股票代码 (6位数字)
+
+    Returns:
+        真实换手率 (%)，获取失败返回 0
+    """
+    market = _get_market_prefix(code)
+    url = f"https://qt.gtimg.cn/q={market}{code}"
+
+    try:
+        response = _safe_request(url, encoding="gbk")
+        text = response.text
+
+        match = re.search(r'"([^"]+)"', text)
+        if not match:
+            return 0
+
+        fields = match.group(1).split("~")
+        if len(fields) < 50:
+            return 0
+
+        # 字段 [49] 是真实换手率 (基于流通股本)
+        real_turnover = float(fields[49]) if fields[49] else 0
+        return real_turnover
+
+    except Exception:
+        return 0
+
+
+def _get_stock_capital_info(code: str) -> dict:
+    """获取股票股本和市值信息
+
+    Args:
+        code: 股票代码 (6位数字)
+
+    Returns:
+        dict 包含 float_shares, total_shares, market_cap, float_cap, real_turnover_rate
+    """
+    market = _get_market_prefix(code)
+    url = f"https://qt.gtimg.cn/q={market}{code}"
+
+    try:
+        response = _safe_request(url, encoding="gbk")
+        text = response.text
+
+        match = re.search(r'"([^"]+)"', text)
+        if not match:
+            return {}
+
+        fields = match.group(1).split("~")
+        if len(fields) < 50:
+            return {}
+
+        price = float(fields[3]) if fields[3] else 0
+        total_market_cap = float(fields[44]) if fields[44] else 0  # 总市值 (亿)
+        float_market_cap = float(fields[45]) if fields[45] else 0  # 流通市值 (亿)
+        total_shares = float(fields[72]) if fields[72] else 0  # 总股本
+
+        # 计算流通股本 = 流通市值 / 股价
+        float_shares = (float_market_cap * 100000000) / price if price > 0 else 0
+
+        return {
+            "float_shares": float_shares,
+            "total_shares": total_shares,
+            "market_cap": total_market_cap,
+            "float_cap": float_market_cap,
+            "real_turnover_rate": float(fields[49]) if len(fields) > 49 and fields[49] else 0,
+        }
+
+    except Exception:
+        return {}
 
 
 # ============================================================

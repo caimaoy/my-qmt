@@ -55,6 +55,11 @@ def init_db():
             change_pct REAL,
             change REAL,
             turnover REAL,
+            real_turnover REAL,
+            float_shares REAL,
+            total_shares REAL,
+            market_cap REAL,
+            float_cap REAL,
             PRIMARY KEY (symbol, date)
         )
     """)
@@ -84,6 +89,20 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_kline_symbol ON daily_kline(symbol)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_kline_date ON daily_kline(date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_index_code ON index_constituents(index_code)")
+
+    # 数据库迁移: 添加新字段 (如果不存在)
+    new_columns = [
+        ("real_turnover", "REAL"),
+        ("float_shares", "REAL"),
+        ("total_shares", "REAL"),
+        ("market_cap", "REAL"),
+        ("float_cap", "REAL"),
+    ]
+    for col_name, col_type in new_columns:
+        try:
+            cursor.execute(f"ALTER TABLE daily_kline ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
 
     conn.commit()
     conn.close()
@@ -117,7 +136,8 @@ def get_cached_kline(symbol: str, start_date: str, end_date: str) -> Optional[pd
     try:
         query = """
             SELECT date, open, close, high, low, volume, amount,
-                   amplitude, change_pct, change, turnover
+                   amplitude, change_pct, change, turnover, real_turnover,
+                   float_shares, total_shares, market_cap, float_cap
             FROM daily_kline
             WHERE symbol = ? AND date >= ? AND date <= ?
             ORDER BY date
@@ -144,6 +164,11 @@ def get_cached_kline(symbol: str, start_date: str, end_date: str) -> Optional[pd
             "change_pct": "Change_Pct",
             "change": "Change",
             "turnover": "Turnover",
+            "real_turnover": "Real_Turnover",
+            "float_shares": "Float_Shares",
+            "total_shares": "Total_Shares",
+            "market_cap": "Market_Cap",
+            "float_cap": "Float_Cap",
         })
 
         return df
@@ -185,14 +210,20 @@ def save_kline_to_cache(symbol: str, df: pd.DataFrame):
                 row.get("Change_Pct"),
                 row.get("Change"),
                 row.get("Turnover"),
+                row.get("Real_Turnover"),
+                row.get("Float_Shares"),
+                row.get("Total_Shares"),
+                row.get("Market_Cap"),
+                row.get("Float_Cap"),
             ))
 
         # 批量插入 (使用 REPLACE 实现 upsert)
         cursor.executemany("""
             REPLACE INTO daily_kline
             (symbol, date, open, close, high, low, volume, amount,
-             amplitude, change_pct, change, turnover)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             amplitude, change_pct, change, turnover, real_turnover,
+             float_shares, total_shares, market_cap, float_cap)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, records)
 
         # 更新元数据
