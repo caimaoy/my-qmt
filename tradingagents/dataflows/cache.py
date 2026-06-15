@@ -60,6 +60,7 @@ def init_db():
             total_shares REAL,
             market_cap REAL,
             float_cap REAL,
+            free_float_shares REAL,
             PRIMARY KEY (symbol, date)
         )
     """)
@@ -97,6 +98,7 @@ def init_db():
         ("total_shares", "REAL"),
         ("market_cap", "REAL"),
         ("float_cap", "REAL"),
+        ("free_float_shares", "REAL"),
     ]
     for col_name, col_type in new_columns:
         try:
@@ -137,7 +139,7 @@ def get_cached_kline(symbol: str, start_date: str, end_date: str) -> Optional[pd
         query = """
             SELECT date, open, close, high, low, volume, amount,
                    amplitude, change_pct, change, turnover, real_turnover,
-                   float_shares, total_shares, market_cap, float_cap
+                   float_shares, total_shares, market_cap, float_cap, free_float_shares
             FROM daily_kline
             WHERE symbol = ? AND date >= ? AND date <= ?
             ORDER BY date
@@ -169,6 +171,7 @@ def get_cached_kline(symbol: str, start_date: str, end_date: str) -> Optional[pd
             "total_shares": "Total_Shares",
             "market_cap": "Market_Cap",
             "float_cap": "Float_Cap",
+            "free_float_shares": "Free_Float_Shares",
         })
 
         return df
@@ -215,6 +218,7 @@ def save_kline_to_cache(symbol: str, df: pd.DataFrame):
                 row.get("Total_Shares"),
                 row.get("Market_Cap"),
                 row.get("Float_Cap"),
+                row.get("Free_Float_Shares"),
             ))
 
         # 批量插入 (使用 REPLACE 实现 upsert)
@@ -222,8 +226,8 @@ def save_kline_to_cache(symbol: str, df: pd.DataFrame):
             REPLACE INTO daily_kline
             (symbol, date, open, close, high, low, volume, amount,
              amplitude, change_pct, change, turnover, real_turnover,
-             float_shares, total_shares, market_cap, float_cap)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             float_shares, total_shares, market_cap, float_cap, free_float_shares)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, records)
 
         # 更新元数据

@@ -380,7 +380,7 @@ def get_stock_capital_info(symbol: str) -> dict:
         symbol: 股票代码
 
     Returns:
-        dict 包含 float_shares, total_shares, market_cap, float_cap, real_turnover_rate
+        dict 包含 float_shares, total_shares, market_cap, float_cap, real_turnover_rate, free_float_shares
     """
     code = symbol.replace(".SS", "").replace(".SZ", "").replace(".SH", "")
     market = "sh" if code.startswith("6") or code.startswith("9") else "sz"
@@ -401,19 +401,27 @@ def get_stock_capital_info(symbol: str) -> dict:
             return {}
 
         price = float(fields[3]) if fields[3] else 0
+        volume = int(fields[6]) if fields[6] else 0  # 成交量 (手)
         total_market_cap = float(fields[44]) if fields[44] else 0  # 总市值 (亿)
         float_market_cap = float(fields[45]) if fields[45] else 0  # 流通市值 (亿)
         total_shares = float(fields[72]) if fields[72] else 0  # 总股本
+        real_turnover_rate = float(fields[49]) if len(fields) > 49 and fields[49] else 0
 
         # 计算流通股本 = 流通市值 / 股价
         float_shares = (float_market_cap * 100000000) / price if price > 0 else 0
+
+        # 计算自由流通股本
+        # 真实换手率 = 成交量(股) / 自由流通股本 × 100%
+        # 自由流通股本 = 成交量(股) / (真实换手率 / 100)
+        free_float_shares = (volume * 100) / (real_turnover_rate / 100) if real_turnover_rate > 0 else 0
 
         return {
             "float_shares": float_shares,
             "total_shares": total_shares,
             "market_cap": total_market_cap,
             "float_cap": float_market_cap,
-            "real_turnover_rate": float(fields[49]) if len(fields) > 49 and fields[49] else 0,
+            "real_turnover_rate": real_turnover_rate,
+            "free_float_shares": free_float_shares,
         }
 
     except Exception:
@@ -457,6 +465,7 @@ def get_stock_data(
             df["Total_Shares"] = capital_info.get("total_shares", 0)
             df["Market_Cap"] = capital_info.get("market_cap", 0)
             df["Float_Cap"] = capital_info.get("float_cap", 0)
+            df["Free_Float_Shares"] = capital_info.get("free_float_shares", 0)
         return df
 
     # 回退到腾讯财经
@@ -471,6 +480,7 @@ def get_stock_data(
             df["Total_Shares"] = capital_info.get("total_shares", 0)
             df["Market_Cap"] = capital_info.get("market_cap", 0)
             df["Float_Cap"] = capital_info.get("float_cap", 0)
+            df["Free_Float_Shares"] = capital_info.get("free_float_shares", 0)
 
     return df
 
